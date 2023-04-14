@@ -50,9 +50,9 @@ fn get_available_pieces<'a>(players: &'a [Vec<Piece>], current_player: &Player) 
     }
 }
 
-fn get_input_from_user(piece_count: usize) -> (usize, Position) {
+fn get_input_from_user(piece_count: usize) -> (usize, Position, usize, bool) {
     loop {
-        println!("Enter the piece number and position (row, col):");
+        println!("Enter the piece number, position (row, col), rotation (0-3), and flip (0 or 1):");
 
         let mut input = String::new();
         io::stdin().read_line(&mut input).expect("Failed to read input");
@@ -62,13 +62,15 @@ fn get_input_from_user(piece_count: usize) -> (usize, Position) {
             .filter_map(|word| word.parse().ok())
             .collect();
 
-        if input_values.len() == 3 {
+        if input_values.len() == 5 {
             let piece_index = input_values[0];
             let row = input_values[1];
             let col = input_values[2];
+            let rotation = input_values[3] % 4;
+            let flip = input_values[4] == 1;
 
             if piece_index < piece_count {
-                return (piece_index, (row, col));
+                return (piece_index, (row, col), rotation, flip);
             }
         }
 
@@ -76,19 +78,53 @@ fn get_input_from_user(piece_count: usize) -> (usize, Position) {
     }
 }
 
+fn flip_piece(piece: &Piece) -> Piece {
+    let mut flipped = piece.clone();
+    flipped.reverse();
+    flipped
+}
+
+fn rotate_piece(piece: &Piece, rotation: usize) -> Piece {
+    let mut rotated = piece.clone();
+    for _ in 0..rotation {
+        rotated = transpose_and_reverse(&rotated);
+    }
+    rotated
+}
+
+fn transpose_and_reverse(matrix: &[Vec<bool>]) -> Vec<Vec<bool>> {
+    let mut transposed = vec![vec![false; matrix.len()]; matrix[0].len()];
+    for i in 0..matrix.len() {
+        for j in 0..matrix[0].len() {
+            transposed[j][i] = matrix[i][j];
+        }
+    }
+    transposed.reverse();
+    transposed
+}
+
+
 fn get_player_input(board: &Board, current_player: &Player, available_pieces: &[Piece]) -> (Piece, Position) {
     loop {
-        let (piece_index, position) = get_input_from_user(available_pieces.len());
+        let (piece_index, position, rotation, flip) = get_input_from_user(available_pieces.len());
 
-        let selected_piece = &available_pieces[piece_index];
+        let mut selected_piece = available_pieces[piece_index].clone();
+
+        if flip {
+            selected_piece = flip_piece(&selected_piece);
+        }
+
+        selected_piece = rotate_piece(&selected_piece, rotation);
+
         let validation_result = is_valid_move(board, &selected_piece, &position, current_player);
 
         match validation_result {
-            Ok(_) => return (selected_piece.clone(), position),
+            Ok(_) => return (selected_piece, position),
             Err(reason) => println!("Invalid move: {}", reason),
         }
     }
 }
+
 
 fn is_first_move(board: &Board, player: &Player) -> bool {
     board.iter().flatten().all(|cell| cell.is_none() || cell.as_ref().unwrap() != player)
