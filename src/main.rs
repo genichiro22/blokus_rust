@@ -1,4 +1,5 @@
 use std::io;
+use std::cmp;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Player {
@@ -49,116 +50,143 @@ fn get_available_pieces<'a>(players: &'a [Vec<Piece>], current_player: &Player) 
     }
 }
 
+fn get_input_from_user(piece_count: usize) -> (usize, Position) {
+    loop {
+        println!("Enter the piece number and position (row, col):");
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).expect("Failed to read input");
+
+        let input_values: Vec<usize> = input
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect();
+
+        if input_values.len() == 3 {
+            let piece_index = input_values[0];
+            let row = input_values[1];
+            let col = input_values[2];
+
+            if piece_index < piece_count {
+                return (piece_index, (row, col));
+            }
+        }
+
+        println!("Invalid input, please try again.");
+    }
+}
 
 fn get_player_input(board: &Board, current_player: &Player, available_pieces: &[Piece]) -> (Piece, Position) {
     loop {
-        println!("Enter the index of the piece you want to play (0-based):");
-        let piece_index: usize = read_input().trim().parse().expect("Please enter a valid number");
+        let (piece_index, position) = get_input_from_user(available_pieces.len());
 
-        if piece_index >= available_pieces.len() {
-            println!("Invalid piece index, please try again.");
-            continue;
-        }
+        let selected_piece = &available_pieces[piece_index];
+        let validation_result = is_valid_move(board, &selected_piece, &position, current_player);
 
-        let selected_piece = available_pieces[piece_index].clone();
-
-        println!("Enter the row and column where you want to place the piece (separated by a space):");
-        let position_input: Vec<usize> = read_input()
-            .split_whitespace()
-            .map(|n| n.parse().expect("Please enter valid numbers"))
-            .collect();
-
-        if position_input.len() != 2 {
-            println!("Invalid input, please enter row and column separated by a space.");
-            continue;
-        }
-
-        let position = (position_input[0], position_input[1]);
-
-        if is_valid_move(board, &selected_piece, &position, current_player) {
-            return (selected_piece, position);
-        } else {
-            println!("Invalid move, please try again.");
+        match validation_result {
+            Ok(_) => return (selected_piece.clone(), position),
+            Err(reason) => println!("Invalid move: {}", reason),
         }
     }
 }
 
-fn read_input() -> String {
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).expect("Failed to read input");
-    input
+fn is_first_move(board: &Board, player: &Player) -> bool {
+    board.iter().flatten().all(|cell| cell.is_none() || cell.as_ref().unwrap() != player)
 }
 
-fn is_valid_move(board: &Board, piece: &Piece, position: &Position, player: &Player) -> bool {
-    // Additional checks for valid placement according to Blokus rules should be implemented here.
-    can_place_piece(board, piece, position, player)
+fn is_corner_move(board: &Board, piece: &Piece, position: &Position, player: &Player) -> bool {
+    let corner_positions = match player {
+        Player::Player1 => vec![(0, 0)],
+        Player::Player2 => vec![(board.len() - 1, board[0].len() - 1)],
+    };
+
+    for &(corner_row, corner_col) in corner_positions.iter() {
+        for (row_offset, piece_row) in piece.iter().enumerate() {
+            for (col_offset, &piece_cell) in piece_row.iter().enumerate() {
+                if piece_cell && (position.0 + row_offset) == corner_row && (position.1 + col_offset) == corner_col {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn check_touching_corner(board: &Board, row: usize, col: usize, player: &Player) -> bool {
+    let row = row as isize;
+    let col = col as isize;
+    let offsets = [(-1, -1), (-1, 1), (1, -1), (1, 1)];
+
+    for (row_offset, col_offset) in offsets.iter() {
+        let new_row = row + row_offset;
+        let new_col = col + col_offset;
+
+        if new_row >= 0 && new_row < board.len() as isize && new_col >= 0 && new_col < board[0].len() as isize {
+            if board[new_row as usize][new_col as usize] == Some(*player) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn check_touching_side(board: &Board, row: usize, col: usize, player: &Player) -> bool {
+    let row = row as isize;
+    let col = col as isize;
+    let offsets = [(-1, 0), (0, -1), (0, 1), (1, 0)];
+
+    for (row_offset, col_offset) in offsets.iter() {
+        let new_row = row + row_offset;
+        let new_col = col + col_offset;
+
+        if new_row >= 0 && new_row < board.len() as isize && new_col >= 0 && new_col < board[0].len() as isize {
+            if board[new_row as usize][new_col as usize] == Some(*player) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn can_place_piece(board: &Board, piece: &Piece, position: &Position, player: &Player) -> bool {
+    let mut min_row = board.len();
+    let mut min_col = board[0].len();
+    let mut touching_corner = false;
+    let mut touching_side = false;
+
     for (row_offset, piece_row) in piece.iter().enumerate() {
-        let board_row = position.0 + row_offset;
-        if board_row >= board.len() {
-            return false;
-        }
-
         for (col_offset, &piece_cell) in piece_row.iter().enumerate() {
-            let board_col = position.1 + col_offset;
-            if board_col >= board[0].len() {
-                return false;
-            }
+            if piece_cell {
+                let row = position.0 + row_offset;
+                let col = position.1 + col_offset;
 
-            if piece_cell && board[board_row][board_col].is_some() {
-                return false;
-            }
-        }
-    }
-
-    // Check if the piece touches another piece of the same color only at the corners
-    let adjacents = [
-        (0, 1),
-        (1, 0),
-        (0, isize::MAX),
-        (isize::MAX, 0),
-    ];
-    let diagonals = [
-        (isize::MAX, isize::MAX),
-        (1, isize::MAX),
-        (isize::MAX, 1),
-        (1, 1),
-    ];
-
-    let mut diagonal_touch = false;
-    for (row_offset, piece_row) in piece.iter().enumerate() {
-        let board_row = position.0 + row_offset;
-        for (col_offset, &piece_cell) in piece_row.iter().enumerate() {
-            if !piece_cell {
-                continue;
-            }
-
-            let board_col = position.1 + col_offset;
-
-            for &(dr, dc) in adjacents.iter() {
-                let neighbor_row = (board_row as isize).wrapping_add(dr) as usize;
-                let neighbor_col = (board_col as isize).wrapping_add(dc) as usize;
-
-                if neighbor_row < board.len() && neighbor_col < board[0].len() && board[neighbor_row][neighbor_col] == Some(*player) {
+                if row >= board.len() || col >= board[0].len() || board[row][col].is_some() {
                     return false;
                 }
-            }
 
-            for &(dr, dc) in diagonals.iter() {
-                let neighbor_row = (board_row as isize).wrapping_add(dr) as usize;
-                let neighbor_col = (board_col as isize).wrapping_add(dc) as usize;
+                touching_corner |= check_touching_corner(board, row, col, player);
+                touching_side |= check_touching_side(board, row, col, player);
 
-                if neighbor_row < board.len() && neighbor_col < board[0].len() && board[neighbor_row][neighbor_col] == Some(*player) {
-                    diagonal_touch = true;
-                }
+                min_row = cmp::min(min_row, row);
+                min_col = cmp::min(min_col, col);
             }
         }
     }
 
-    diagonal_touch
+    if min_row > 0 && min_col > 0 && !touching_corner {
+        return false;
+    }
+
+    if touching_side {
+        return false;
+    }
+
+    true
 }
+
 
 fn make_move(board: &mut Board, players: &mut Vec<Vec<Piece>>, selected_piece: &Piece, position: &Position, current_player: &Player) {
     for (row_offset, piece_row) in selected_piece.iter().enumerate() {
@@ -201,6 +229,18 @@ fn declare_winner(players: &[Vec<Piece>]) {
     }
 }
 
+fn is_valid_move(board: &Board, piece: &Piece, position: &Position, player: &Player) -> Result<(), &'static str> {
+    if is_first_move(board, player) {
+        if !is_corner_move(board, piece, position, player) {
+            return Err("First move must be placed in the corner.");
+        }
+    } else if !can_place_piece(board, piece, position, player) {
+        return Err("Invalid move: Cannot place piece at the given position.");
+    }
+
+    Ok(())
+}
+
 fn main() {
     let mut board = initialize_board();
     let mut players = initialize_players();
@@ -216,17 +256,17 @@ fn main() {
 
         let (selected_piece, position) = get_player_input(&board, &current_player, &available_pieces);
 
-        if is_valid_move(&board, &selected_piece, &position, &current_player) {
-            make_move(&mut board, &mut players, &selected_piece, &position, &current_player);
+        match is_valid_move(&board, &selected_piece, &position, &current_player) {
+            Ok(_) => {
+                make_move(&mut board, &mut players, &selected_piece, &position, &current_player);
 
-            if check_game_over(&players) {
-                declare_winner(&players);
-                break;
+                if check_game_over(&players) {
+                    declare_winner(&players);
+                    break;
+                }
+                current_player = switch_player(current_player);
             }
-            current_player = switch_player(current_player);
-        } else {
-            println!("Invalid move, please try again.");
+            Err(reason) => println!("Invalid move: {}", reason),
         }
     }
 }
-
